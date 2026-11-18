@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 )
 
@@ -89,5 +90,25 @@ func TestCallRPCSuccessAndError(t *testing.T) {
 	apiErr, ok := err.(*APIError)
 	if !ok || apiErr.Code != "InvalidInstanceId.NotFound" || apiErr.HTTPStatus != 404 {
 		t.Fatalf("expected structured APIError, got %T %v", err, err)
+	}
+}
+
+func TestNewClientConfiguresProxyAndTimeouts(t *testing.T) {
+	client := NewClient()
+	tr, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.httpClient.Transport)
+	}
+	if tr.Proxy == nil {
+		t.Fatal("expected Transport.Proxy to be configured")
+	}
+	if reflect.ValueOf(tr.Proxy).Pointer() != reflect.ValueOf(http.ProxyFromEnvironment).Pointer() {
+		t.Fatal("expected Transport.Proxy to use http.ProxyFromEnvironment")
+	}
+	if tr.DialContext == nil {
+		t.Fatal("expected Transport.DialContext to be configured")
+	}
+	if tr.TLSHandshakeTimeout <= 0 {
+		t.Fatalf("expected positive TLSHandshakeTimeout, got %v", tr.TLSHandshakeTimeout)
 	}
 }
