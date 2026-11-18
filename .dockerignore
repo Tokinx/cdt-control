@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+data/
+scripts/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.DS_Store
+/ecs-cdt-panel

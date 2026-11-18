@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    try {
+      const saved = localStorage.getItem("color-scheme");
+      if (saved === "light" || saved === "dark") {
+        document.querySelector('meta[name="color-scheme"]').content = saved;
+      }
+    } catch (_) {}
+  </script>
+  <title>ECS CDT</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div id="action-popover" class="cselect-menu action-popover" popover="auto"></div>
+
+  <!-- 登录视图 -->
+  <main id="login-view" class="login-shell" hidden>
+    <section class="login-card" aria-labelledby="login-title">
+      <div class="login-head">
+        <span class="brand-badge" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h4l3-7 4 14 3-7h4"/>
+          </svg>
+        </span>
+        <h1 id="login-title" class="login-title">ECS CDT</h1>
+      </div>
+
+      <form id="login-form" class="stack-md" novalidate>
+        <div class="field">
+          <label for="login-username">账号</label>
+          <input
+            type="text"
+            id="login-username"
+            name="username"
+            autocomplete="username"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="next"
+            required
+            data-error="login-username-err"
+          >
+          <div id="login-username-err" class="error-msg">
+            <span role="img" aria-label="错误">!</span> 请输入登录账号。
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="label-row">
+            <label for="login-password">密码</label>
+            <button
+              type="button"
+              id="toggle-login-password"
+              class="link-btn icon-inline"
+              aria-pressed="false"
+              aria-label="显示密码"
+              aria-describedby="login-pw-warn"
+            >
+              <svg id="eye-icon-show" class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg id="eye-icon-hide" class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" hidden>
+                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6.5 0-10-7-10-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/>
+              </svg>
+              <span id="eye-toggle-text">显示</span>
+            </button>
+          </div>
+          <span id="login-pw-warn" class="visually-hidden">提示：开启后将在屏幕上明文显示密码。</span>
+          <input
+            type="password"
+            id="login-password"
+            name="password"
+            autocomplete="current-password"
+            enterkeyhint="done"
+            required
+            data-error="login-password-err"
+          >
+          <div id="login-password-err" class="error-msg">
+            <span role="img" aria-label="错误">!</span> 请输入登录密码。
+          </div>
+        </div>
+
+        <div id="login-server-error" class="alert alert-danger" role="alert" hidden></div>
+
+        <button type="submit" id="login-submit-btn" class="btn btn-primary btn-full">登录</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- 主应用外壳 -->
+  <div id="app-shell" class="app-shell" hidden>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-brand">
+          <button type="button" id="brand-home-btn" class="brand-home-btn">
+            <span class="brand-badge brand-badge-sm" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12h4l3-7 4 14 3-7h4"/>
+              </svg>
+            </span>
+            <span>ECS CDT</span>
+          </button>
+        </div>
+
+        <nav class="topbar-actions" aria-label="主导航">
+          <button type="button" id="btn-trigger-now" class="nav-btn icon-only" aria-label="立即巡检" title="立即巡检">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+            </svg>
+          </button>
+          <button type="button" id="btn-open-accounts" class="nav-btn icon-only" aria-label="账号管理" title="账号管理">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>
+            </svg>
+          </button>
+          <button type="button" id="btn-open-settings" class="nav-btn icon-only" aria-label="设置" title="设置">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+              <rect x="7" y="4" width="4" height="4" fill="var(--bg-surface)"/><rect x="13" y="10" width="4" height="4" fill="var(--bg-surface)"/><rect x="8" y="16" width="4" height="4" fill="var(--bg-surface)"/>
+            </svg>
+          </button>
+          <button type="button" id="btn-open-global-logs" class="nav-btn icon-only" aria-label="日志" title="日志">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16"/><path d="m7 9 3 3-3 3"/><line x1="12" y1="15" x2="17" y2="15"/>
+            </svg>
+          </button>
+          <button type="button" id="btn-logout" class="nav-btn nav-btn-muted">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path d="M9 21H5V3h4"/><path d="m16 17 5-5-5-5"/><line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            <span>退出</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- 控制台总览 -->
+    <main id="dashboard-view" class="page-container" hidden>
+      <section aria-labelledby="cdt-section-title" class="section-block">
+        <div class="section-head wrap-gap">
+          <div class="section-title-row">
+            <svg class="icon section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/>
+            </svg>
+            <h1 id="cdt-section-title" class="section-heading">CDT 流量</h1>
+            <span id="cdt-count-label" class="muted-text"></span>
+          </div>
+          <span id="cdt-sync-label" class="meta-item muted-text tabular"></span>
+        </div>
+        <div id="cdt-grid" class="card-grid"></div>
+      </section>
+
+      <section aria-labelledby="ecs-section-title" class="section-block">
+        <div class="section-head wrap-gap">
+          <div class="section-title-row">
+            <svg class="icon section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="7"/><rect x="3" y="13" width="18" height="7"/><line x1="7" y1="7.5" x2="7.01" y2="7.5" stroke-width="2.5"/><line x1="7" y1="16.5" x2="7.01" y2="16.5" stroke-width="2.5"/>
+            </svg>
+            <h2 id="ecs-section-title" class="section-heading">ECS 实例</h2>
+            <span id="ecs-count-label" class="muted-text"></span>
+          </div>
+          <div class="page-head-actions">
+            <button type="button" id="btn-add-instance" class="btn btn-primary">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              <span>添加实例</span>
+            </button>
+          </div>
+        </div>
+        <div id="instances-container"></div>
+      </section>
+    </main>
+
+    <!-- 实例详情与日志视图 -->
+    <main id="detail-view" class="page-container" hidden>
+      <div class="detail-nav">
+        <button type="button" id="btn-back-dashboard" class="nav-btn">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+            <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
+          </svg>
+          <span>返回总览</span>
+        </button>
+        <div id="detail-quick-actions" class="detail-quick-actions"></div>
+      </div>
+
+      <div class="detail-title-bar">
+        <div>
+          <div class="detail-name-row">
+            <h1 id="detail-title" class="detail-title">实例详情</h1>
+            <span id="detail-status-slot"></span>
+          </div>
+          <p id="detail-subtitle" class="muted-text mono"></p>
+        </div>
+        <div id="detail-badges" class="detail-meta-tags"></div>
+      </div>
+
+      <div class="detail-grid">
+        <section class="surface-panel" aria-labelledby="detail-info-heading">
+          <h2 id="detail-info-heading" class="panel-heading">实例与流量</h2>
+          <dl id="detail-meta-list" class="meta-dl"></dl>
+        </section>
+
+        <section class="surface-panel" aria-labelledby="detail-policy-heading">
+          <h2 id="detail-policy-heading" class="panel-heading">自动化策略</h2>
+          <dl id="detail-policy-list" class="meta-dl"></dl>
+          <div id="detail-error-box" class="alert alert-danger" hidden></div>
+        </section>
+      </div>
+
+      <section class="surface-panel" aria-labelledby="detail-logs-heading">
+        <div class="section-head wrap-gap">
+          <div class="tab-group" role="tablist" aria-label="实例日志分类">
+            <button type="button" role="tab" id="tab-inst-realtime" class="tab-btn is-active" aria-selected="true" data-log-tab="realtime">实时追踪</button>
+            <button type="button" role="tab" id="tab-inst-audit" class="tab-btn" aria-selected="false" data-log-tab="audit">审计记录</button>
+          </div>
+          <div class="inline-controls">
+            <h2 id="detail-logs-heading" class="visually-hidden">实例运行日志</h2>
+            <span id="detail-log-level-lbl" class="visually-hidden">日志级别筛选</span>
+            <div class="cselect cselect-sm" id="detail-log-level">
+              <button type="button" class="cselect-trigger" id="detail-log-level-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="detail-log-level-lbl detail-log-level-val">
+                <span class="cselect-value" id="detail-log-level-val">全部级别</span>
+                <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="cselect-menu" role="listbox" popover="auto"></div>
+            </div>
+            <button type="button" id="btn-refresh-inst-logs" class="btn btn-subtle btn-sm btn-icon-only" aria-label="刷新日志" title="刷新">
+              <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="detail-logs-list" class="log-list" role="region" aria-label="实例日志内容" tabindex="0"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 弹窗 1：阿里云账号管理 -->
+  <dialog id="accounts-dialog" class="modal modal-lg" closedby="any" aria-labelledby="accounts-dialog-title">
+    <div class="modal-head">
+      <h2 id="accounts-dialog-title">账号管理</h2>
+      <button type="button" class="icon-close" data-close-dialog="accounts-dialog" aria-label="关闭账号管理弹窗">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body stack-lg">
+      <div id="accounts-list" class="stack-sm"></div>
+
+      <form id="account-form" class="sub-box stack-md" novalidate>
+        <div class="sub-box-head">
+          <h3 id="account-form-title">新增阿里云账号</h3>
+          <button type="button" id="btn-account-reset" class="link-btn" hidden>取消编辑</button>
+        </div>
+        <input type="hidden" id="acc-id" name="id">
+
+        <div class="form-grid-2">
+          <div class="field">
+            <label for="acc-name">备注名称 <span class="req" aria-hidden="true">*</span></label>
+            <input type="text" id="acc-name" name="name" placeholder="主账号" required data-error="acc-name-err">
+            <div id="acc-name-err" class="error-msg">请填写备注名称。</div>
+          </div>
+          <div class="field">
+            <label for="acc-ak-id">AccessKey ID <span class="req" aria-hidden="true">*</span></label>
+            <input type="text" id="acc-ak-id" name="access_key_id" autocorrect="off" autocapitalize="none" spellcheck="false" required data-error="acc-ak-err">
+            <div id="acc-ak-err" class="error-msg">请填写 AccessKey ID。</div>
+          </div>
+        </div>
+
+        <div class="form-grid-3">
+          <div class="field">
+            <label for="acc-ak-secret">AccessKey Secret <span id="acc-secret-req" class="req" aria-hidden="true">*</span></label>
+            <input type="password" id="acc-ak-secret" name="access_key_secret" autocomplete="new-password" placeholder="编辑留空保持原值">
+          </div>
+          <div class="field">
+            <label for="acc-dom-quota">境内参考配额 (GB)</label>
+            <input type="number" id="acc-dom-quota" name="domestic_quota_gb" min="1" step="1" value="20">
+          </div>
+          <div class="field">
+            <label for="acc-ovs-quota">境外参考配额 (GB)</label>
+            <input type="number" id="acc-ovs-quota" name="overseas_quota_gb" min="1" step="1" value="180">
+          </div>
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="acc-enabled" name="enabled" checked>
+          <label for="acc-enabled">启用 CDT 流量采集</label>
+        </div>
+
+        <div id="account-form-msg" class="alert" hidden></div>
+
+        <div class="modal-actions-inline">
+          <button type="button" id="btn-test-account-draft" class="btn btn-subtle">测试连通</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- 弹窗 2：添加 / 编辑实例 -->
+  <dialog id="instance-dialog" class="modal modal-lg" closedby="closerequest" aria-labelledby="instance-dialog-title">
+    <div class="modal-head">
+      <h2 id="instance-dialog-title">添加监控实例</h2>
+      <button type="button" class="icon-close" data-close-dialog="instance-dialog" aria-label="关闭实例配置弹窗">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <form id="instance-form" class="modal-body stack-md" novalidate>
+      <input type="hidden" id="inst-id" name="id">
+
+      <div class="form-grid-2" id="inst-account-row">
+        <div class="field">
+          <div class="label-row">
+            <label id="inst-account-lbl" for="inst-account-btn">所属阿里云账号 <span class="req" aria-hidden="true">*</span></label>
+          </div>
+          <div class="cselect" id="inst-account-id">
+            <button type="button" class="cselect-trigger" id="inst-account-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="inst-account-lbl inst-account-val">
+              <span class="cselect-value" id="inst-account-val">请选择账号</span>
+              <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cselect-menu" role="listbox" popover="auto"></div>
+          </div>
+        </div>
+        <div class="field" id="inst-discover-field">
+          <div class="label-row">
+            <label id="inst-discover-lbl" for="inst-discover-btn">选择实例</label>
+            <button type="button" id="btn-inst-discover-refresh" class="link-btn" title="重新获取该账号下的实例">刷新</button>
+          </div>
+          <div class="cselect" id="inst-discover">
+            <button type="button" class="cselect-trigger" id="inst-discover-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="inst-discover-lbl inst-discover-val">
+              <span class="cselect-value" id="inst-discover-val">手动录入</span>
+              <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cselect-menu" role="listbox" popover="auto"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid-3">
+        <div class="field">
+          <label for="inst-region">地域 RegionId <span class="req" aria-hidden="true">*</span></label>
+          <div class="ccombo" id="inst-region-combo">
+            <input
+              type="text"
+              id="inst-region"
+              name="region_id"
+              placeholder="cn-hongkong"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="inst-region-listbox"
+              required
+            >
+            <button type="button" id="inst-region-toggle" class="ccombo-toggle" aria-label="展开常见地域列表">
+              <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="inst-region-listbox" class="cselect-menu ccombo-menu" role="listbox" popover="manual"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="inst-aliyun-id">实例 ID <span class="req" aria-hidden="true">*</span></label>
+          <input type="text" id="inst-aliyun-id" name="instance_id" placeholder="i-xxxxxxxx" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required>
+        </div>
+        <div class="field">
+          <label for="inst-name">备注名称</label>
+          <input type="text" id="inst-name" name="name" autocomplete="off" placeholder="默认使用实例 ID">
+        </div>
+      </div>
+
+      <div class="form-grid-2">
+        <div class="field">
+          <label for="inst-threshold">流量熔断阈值 (GB)</label>
+          <input type="number" id="inst-threshold" name="traffic_threshold_gb" min="0" step="0.1" value="190" required>
+        </div>
+        <div class="field">
+          <label id="inst-mode-lbl" for="inst-mode-btn">策略模式</label>
+          <div class="cselect" id="inst-mode">
+            <button type="button" class="cselect-trigger" id="inst-mode-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="inst-mode-lbl inst-mode-val">
+              <span class="cselect-value" id="inst-mode-val">自动开关机</span>
+              <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cselect-menu" role="listbox" popover="auto"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-box stack-sm">
+        <div class="checkbox-row">
+          <input type="checkbox" id="inst-sched-enable" name="enable_schedule_control">
+          <label for="inst-sched-enable">启用定时开关机窗口（支持跨零点）</label>
+        </div>
+        <div id="inst-sched-times" class="form-grid-2" hidden>
+          <div class="field">
+            <label for="inst-sched-start">开机时间 (HH:MM)</label>
+            <input type="text" id="inst-sched-start" name="schedule_start" value="08:00" autocomplete="off" pattern="^([01]?\d|2[0-3]):[0-5]\d$" placeholder="08:00">
+          </div>
+          <div class="field">
+            <label for="inst-sched-stop">关机时间 (HH:MM)</label>
+            <input type="text" id="inst-sched-stop" name="schedule_stop" value="00:00" autocomplete="off" pattern="^([01]?\d|2[0-3]):[0-5]\d$" placeholder="00:00">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid-2">
+        <div class="field">
+          <label id="inst-stopped-mode-lbl" for="inst-stopped-mode-btn">停机模式</label>
+          <div class="cselect" id="inst-stopped-mode">
+            <button type="button" class="cselect-trigger" id="inst-stopped-mode-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="inst-stopped-mode-lbl inst-stopped-mode-val">
+              <span class="cselect-value" id="inst-stopped-mode-val">StopCharging（节省停机）</span>
+              <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cselect-menu" role="listbox" popover="auto"></div>
+          </div>
+        </div>
+        <div class="field field-end">
+          <div class="checkbox-inline-group">
+            <div class="checkbox-row">
+              <input type="checkbox" id="inst-force-stop" name="force_stop">
+              <label for="inst-force-stop">强制关机</label>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="inst-enabled" name="enabled" checked>
+              <label for="inst-enabled">启用监控</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="instance-form-msg" class="alert" hidden></div>
+
+      <div class="modal-foot">
+        <button type="button" id="btn-test-instance-cred" class="btn btn-subtle">验证实例</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost" data-close-dialog="instance-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 弹窗 4：通知与系统设置 -->
+  <dialog id="settings-dialog" class="modal modal-lg" closedby="any" aria-labelledby="settings-dialog-title">
+    <div class="modal-head">
+      <h2 id="settings-dialog-title">系统与通知设置</h2>
+      <button type="button" class="icon-close" data-close-dialog="settings-dialog" aria-label="关闭设置弹窗">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <form id="settings-form" class="modal-body stack-lg" novalidate>
+      <fieldset class="fieldset-clean">
+        <legend>外观与巡检</legend>
+        <div class="form-grid-3">
+          <div class="field">
+            <label id="set-theme-lbl" for="set-theme-btn">主题</label>
+            <div class="cselect" id="set-theme">
+              <button type="button" class="cselect-trigger" id="set-theme-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="set-theme-lbl set-theme-val">
+                <span class="cselect-value" id="set-theme-val">跟随系统</span>
+                <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="cselect-menu" role="listbox" popover="auto"></div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="set-interval">巡检周期 (秒)</label>
+            <input type="number" id="set-interval" min="10" max="3600" value="60" required>
+          </div>
+          <div class="field field-end">
+            <div class="checkbox-inline-group">
+              <div class="checkbox-row">
+                <input type="checkbox" id="set-sched-enabled" checked>
+                <label for="set-sched-enabled">启用自动巡检</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset-clean">
+        <legend>Bark 推送</legend>
+        <div class="checkbox-row">
+          <input type="checkbox" id="set-bark-enabled">
+          <label for="set-bark-enabled">启用 Bark</label>
+        </div>
+        <div class="form-grid-3">
+          <div class="field">
+            <label for="set-bark-endpoint">推送地址</label>
+            <input type="url" id="set-bark-endpoint" placeholder="https://api.day.app/..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+            <span id="set-bark-hint" class="hint"></span>
+          </div>
+          <div class="field">
+            <label for="set-bark-group">分组</label>
+            <input type="text" id="set-bark-group" autocomplete="off" value="DevOps">
+          </div>
+          <div class="field">
+            <label for="set-bark-sound">铃声 (可选)</label>
+            <input type="text" id="set-bark-sound" autocomplete="off" placeholder="alarm">
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset-clean">
+        <legend>Webhook 推送</legend>
+        <div class="checkbox-row">
+          <input type="checkbox" id="set-webhook-enabled">
+          <label for="set-webhook-enabled">启用 Webhook</label>
+        </div>
+        <div class="field">
+          <label for="set-webhook-url">Webhook URL</label>
+          <input type="url" id="set-webhook-url" placeholder="https://example.com/webhook" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+          <span id="set-webhook-hint" class="hint"></span>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset-clean">
+        <legend>订阅事件</legend>
+        <div class="checkbox-grid">
+          <label class="checkbox-row"><input type="checkbox" id="ev-start" checked><span>自动开机</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="ev-stop" checked><span>定时关机</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="ev-fuse" checked><span>熔断停机</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="ev-error" checked><span>异常告警</span></label>
+        </div>
+      </fieldset>
+
+      <div id="settings-msg" class="alert" hidden></div>
+
+      <div class="modal-foot">
+        <button type="button" id="btn-test-notify" class="btn btn-subtle">保存并测试</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost" data-close-dialog="settings-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 弹窗 5：全局日志 -->
+  <dialog id="global-logs-dialog" class="modal modal-lg" closedby="any" aria-labelledby="global-logs-title">
+    <div class="modal-head">
+      <h2 id="global-logs-title">全局日志</h2>
+      <button type="button" class="icon-close" data-close-dialog="global-logs-dialog" aria-label="关闭全局日志弹窗">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body stack-md">
+      <div class="section-head">
+        <div class="tab-group" role="tablist" aria-label="全局日志分类">
+          <button type="button" role="tab" class="tab-btn is-active" aria-selected="true" data-glog-tab="audit">审计记录</button>
+          <button type="button" role="tab" class="tab-btn" aria-selected="false" data-glog-tab="realtime">实时追踪</button>
+        </div>
+        <div class="inline-controls">
+          <span id="glog-level-lbl" class="visually-hidden">全局日志级别</span>
+          <div class="cselect cselect-sm" id="glog-level">
+            <button type="button" class="cselect-trigger" id="glog-level-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="glog-level-lbl glog-level-val">
+              <span class="cselect-value" id="glog-level-val">全部级别</span>
+              <svg class="icon icon-xs cselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cselect-menu" role="listbox" popover="auto"></div>
+          </div>
+          <button type="button" id="btn-refresh-glogs" class="btn btn-subtle btn-sm btn-icon-only" aria-label="刷新日志" title="刷新">
+            <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="global-logs-list" class="log-list" role="region" aria-label="全局日志列表" tabindex="0"></div>
+    </div>
+  </dialog>
+
+  <!-- 弹窗 6：操作二次确认（统一含详细说明） -->
+  <dialog id="action-confirm-dialog" class="modal modal-sm" closedby="any" aria-labelledby="act-confirm-title">
+    <div class="modal-head">
+      <h2 id="act-confirm-title">确认操作</h2>
+      <button type="button" class="icon-close" data-close-dialog="action-confirm-dialog" aria-label="关闭确认弹窗">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <form method="dialog" class="modal-body stack-md">
+      <p id="act-confirm-desc"></p>
+      <dl id="act-confirm-summary" class="meta-dl confirm-summary"></dl>
+      <div id="act-confirm-warn" class="alert alert-warn" hidden></div>
+      <div id="act-confirm-options" class="stack-sm" hidden>
+        <div class="checkbox-row">
+          <input type="checkbox" id="stop-force-check">
+          <label for="stop-force-check">强制关机 (ForceStop)</label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="submit" value="cancel" class="btn btn-ghost" autofocus>取消</button>
+        <button type="submit" value="confirm" id="act-confirm-btn" class="btn btn-primary">确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

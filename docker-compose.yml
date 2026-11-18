@@ -1,0 +1,23 @@
+services:
+  ecs-cdt-panel:
+    image: ghcr.io/tokinx/cdt-control:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecs-cdt-panel
+    restart: unless-stopped
+    ports:
+      - "${PANEL_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      PANEL_USERNAME: ${PANEL_USERNAME:-admin}
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?请在 .env 或环境变量中设置 PANEL_PASSWORD}
+      # 可选：使用 bcrypt 哈希替代明文密码
+      # PANEL_PASSWORD_HASH: ${PANEL_PASSWORD_HASH:-}
+      # 可选：自定义 Session 与数据库加密密钥（留空则在 /app/data 自动持久化生成）
+      # SESSION_SECRET: ${SESSION_SECRET:-}
+      CHECK_INTERVAL: ${CHECK_INTERVAL:-60}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - ./data:/app/data
+    mem_limit: 64m
