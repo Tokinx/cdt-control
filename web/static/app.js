@@ -6,8 +6,10 @@ const state = {
   activeInstanceId: null,
   detailLogTab: "realtime",
   detailLogLevel: "all",
+  detailLogsSeq: 0,
   globalLogTab: "audit",
   globalLogLevel: "all",
+  globalLogsSeq: 0,
   settingsCache: null,
   discoveredInstances: [],
   discoverSeq: 0,
@@ -78,11 +80,33 @@ function fmtGB(v) {
 
 function showToast(msg, kind = "info") {
   const region = $("#toast-region");
+  if (!region) return;
+  if (supportsPopover && region.hasAttribute("popover")) {
+    try {
+      if (region.matches(":popover-open")) {
+        region.hidePopover();
+      }
+      region.showPopover();
+    } catch {
+      // ignore if disconnected
+    }
+  }
   const node = document.createElement("div");
   node.className = `toast ${kind === "error" ? "is-error" : kind === "success" ? "is-success" : ""}`;
   node.textContent = msg;
   region.append(node);
-  setTimeout(() => node.remove(), 3500);
+  setTimeout(() => {
+    node.remove();
+    if (supportsPopover && region.hasAttribute("popover") && !region.childElementCount) {
+      try {
+        if (region.matches(":popover-open")) {
+          region.hidePopover();
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, 3500);
 }
 
 async function apiFetch(url, options = {}) {
@@ -946,6 +970,10 @@ function openActionConfirmModal({
     submitBtn.textContent = confirmLabel;
     submitBtn.className = danger ? "btn btn-danger" : "btn btn-primary";
 
+    if (dialog.open) {
+      dialog.close("cancel");
+    }
+
     const onClose = () => {
       const confirmed = dialog.returnValue === "confirm";
       dialog.returnValue = "";
@@ -1478,16 +1506,19 @@ function syncLogClearButton(btn, items) {
 }
 
 async function refreshInstanceLogs(id) {
+  const seq = ++state.detailLogsSeq;
   const listEl = $("#detail-logs-list");
   const clearBtn = $("#btn-clear-inst-logs");
   try {
     const res = await apiFetch(`/api/instances/${id}/logs?level=${encodeURIComponent(state.detailLogLevel)}`);
+    if (seq !== state.detailLogsSeq || state.activeInstanceId !== id) return;
     const items = state.detailLogTab === "realtime"
       ? filterLogsByLevel(res.realtime || [], state.detailLogLevel)
       : (res.audit || []);
     syncLogClearButton(clearBtn, items);
     renderLogItems(listEl, items);
   } catch (err) {
+    if (seq !== state.detailLogsSeq) return;
     syncLogClearButton(clearBtn, []);
     listEl.innerHTML = `<div class="muted-text log-empty">加载日志失败：${esc(err.message)}</div>`;
   }
@@ -1927,24 +1958,63 @@ async function saveSettingsFromForm() {
 
 /* ==================== 弹窗：全局日志 ==================== */
 async function openGlobalLogsDialog() {
+  syncLogClearButton($("#btn-clear-glogs"), []);
   $("#global-logs-dialog").showModal();
   await refreshGlobalLogs();
 }
 
 async function refreshGlobalLogs() {
+  const seq = ++state.globalLogsSeq;
   const box = $("#global-logs-list");
   const clearBtn = $("#btn-clear-glogs");
   try {
     const res = await apiFetch(`/api/logs?level=${encodeURIComponent(state.globalLogLevel)}`);
+    if (seq !== state.globalLogsSeq) return;
     const items = state.globalLogTab === "realtime"
       ? filterLogsByLevel(res.realtime || [], state.globalLogLevel)
       : (res.audit || []);
     syncLogClearButton(clearBtn, items);
     renderLogItems(box, items);
   } catch (err) {
+    if (seq !== state.globalLogsSeq) return;
     syncLogClearButton(clearBtn, []);
     box.innerHTML = `<div class="muted-text log-empty">加载失败：${esc(err.message)}</div>`;
   }
+}
+
+function initTabGroup(tablistEl, onSelect) {
+  if (!tablistEl) return;
+  const tabs = $$('[role="tab"]', tablistEl);
+  if (!tabs.length) return;
+
+  const activate = (tab, moveFocus = false) => {
+    for (const t of tabs) {
+      const active = t === tab;
+      t.classList.toggle("is-active", active);
+      t.setAttribute("aria-selected", String(active));
+      t.setAttribute("tabindex", active ? "0" : "-1");
+    }
+    if (moveFocus) tab.focus();
+    onSelect(tab);
+  };
+
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => activate(tab, false));
+  }
+
+  tablistEl.addEventListener("keydown", (e) => {
+    const idx = tabs.indexOf(document.activeElement);
+    if (idx === -1) return;
+    let nextIdx = -1;
+    if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") nextIdx = 0;
+    else if (e.key === "End") nextIdx = tabs.length - 1;
+    if (nextIdx >= 0) {
+      e.preventDefault();
+      activate(tabs[nextIdx], true);
+    }
+  });
 }
 
 /* ==================== 事件绑定与启动 ==================== */
@@ -2198,17 +2268,10 @@ function bindEvents() {
     }
   });
 
-  for (const tab of $$("[data-log-tab]")) {
-    tab.addEventListener("click", () => {
-      state.detailLogTab = tab.dataset.logTab;
-      for (const t of $$("[data-log-tab]")) {
-        const active = t === tab;
-        t.classList.toggle("is-active", active);
-        t.setAttribute("aria-selected", String(active));
-      }
-      if (state.activeInstanceId) refreshInstanceLogs(state.activeInstanceId);
-    });
-  }
+  initTabGroup($("#detail-log-tabs"), (tab) => {
+    state.detailLogTab = tab.dataset.logTab;
+    if (state.activeInstanceId) refreshInstanceLogs(state.activeInstanceId);
+  });
   $("#btn-refresh-inst-logs").addEventListener("click", () => {
     if (state.activeInstanceId) refreshInstanceLogs(state.activeInstanceId);
   });
@@ -2216,17 +2279,10 @@ function bindEvents() {
     if (state.activeInstanceId) clearInstanceLogs(state.activeInstanceId);
   });
 
-  for (const tab of $$("[data-glog-tab]")) {
-    tab.addEventListener("click", () => {
-      state.globalLogTab = tab.dataset.glogTab;
-      for (const t of $$("[data-glog-tab]")) {
-        const active = t === tab;
-        t.classList.toggle("is-active", active);
-        t.setAttribute("aria-selected", String(active));
-      }
-      refreshGlobalLogs();
-    });
-  }
+  initTabGroup($("#global-log-tabs"), (tab) => {
+    state.globalLogTab = tab.dataset.glogTab;
+    refreshGlobalLogs();
+  });
   $("#btn-refresh-glogs").addEventListener("click", refreshGlobalLogs);
   $("#btn-clear-glogs").addEventListener("click", clearGlobalLogs);
 
@@ -2234,6 +2290,9 @@ function bindEvents() {
 }
 
 async function boot() {
+  if (!supportsPopover) {
+    $("#toast-region")?.removeAttribute("popover");
+  }
   setupDialogs();
   initCustomSelects();
   initFormValidation();

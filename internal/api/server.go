@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -22,14 +25,16 @@ import (
 
 // Server wires HTTP API handlers and embedded static assets.
 type Server struct {
-	ctx      context.Context
-	cfg      *config.Config
-	store    *db.Store
-	ali      *aliyun.Client
-	notifier *notify.Sender
-	engine   *scheduler.Engine
-	authMgr  *auth.Manager
-	staticFS fs.FS
+	ctx         context.Context
+	cfg         *config.Config
+	store       *db.Store
+	ali         *aliyun.Client
+	notifier    *notify.Sender
+	engine      *scheduler.Engine
+	authMgr     *auth.Manager
+	staticFS    fs.FS
+	assetHashes map[string]string
+	indexHTML   []byte
 }
 
 // NewServer constructs the panel HTTP handler.
@@ -46,15 +51,18 @@ func NewServer(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	assetHashes, indexHTML := buildStaticManifest(staticFS)
 	s := &Server{
-		ctx:      ctx,
-		cfg:      cfg,
-		store:    store,
-		ali:      ali,
-		notifier: notifier,
-		engine:   engine,
-		authMgr:  authMgr,
-		staticFS: staticFS,
+		ctx:         ctx,
+		cfg:         cfg,
+		store:       store,
+		ali:         ali,
+		notifier:    notifier,
+		engine:      engine,
+		authMgr:     authMgr,
+		staticFS:    staticFS,
+		assetHashes: assetHashes,
+		indexHTML:   indexHTML,
 	}
 
 	mux := http.NewServeMux()
@@ -109,13 +117,80 @@ func NewServer(
 		}
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Cache-Control", "no-store")
+			if len(s.indexHTML) > 0 {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				if r.Method != http.MethodHead {
+					_, _ = w.Write(s.indexHTML)
+				}
+				return
+			}
 			http.ServeFileFS(w, r, s.staticFS, "index.html")
 			return
+		}
+		assetName := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if hash, ok := s.assetHashes[assetName]; ok {
+			etag := `"` + hash + `"`
+			w.Header().Set("ETag", etag)
+			if r.URL.Query().Get("v") == hash {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-store")
+			}
+			if etagMatches(r.Header.Get("If-None-Match"), etag) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		} else {
+			w.Header().Set("Cache-Control", "no-store")
 		}
 		fileServer.ServeHTTP(w, r)
 	})
 
 	return securityHeaders(mux)
+}
+
+func buildStaticManifest(staticFS fs.FS) (map[string]string, []byte) {
+	hashes := make(map[string]string)
+	if staticFS == nil {
+		return hashes, nil
+	}
+	_ = fs.WalkDir(staticFS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || p == "index.html" {
+			return nil
+		}
+		data, readErr := fs.ReadFile(staticFS, p)
+		if readErr != nil {
+			return nil
+		}
+		sum := sha256.Sum256(data)
+		hashes[p] = hex.EncodeToString(sum[:6])
+		return nil
+	})
+	rawIndex, err := fs.ReadFile(staticFS, "index.html")
+	if err != nil {
+		return hashes, nil
+	}
+	html := string(rawIndex)
+	if cssHash := hashes["app.css"]; cssHash != "" {
+		html = strings.ReplaceAll(html, `href="/app.css"`, `href="/app.css?v=`+cssHash+`"`)
+	}
+	if jsHash := hashes["app.js"]; jsHash != "" {
+		html = strings.ReplaceAll(html, `src="/app.js"`, `src="/app.js?v=`+jsHash+`"`)
+	}
+	return hashes, []byte(html)
+}
+
+func etagMatches(headerVal, etag string) bool {
+	if headerVal == "" {
+		return false
+	}
+	for _, part := range strings.Split(headerVal, ",") {
+		candidate := strings.TrimSpace(part)
+		if candidate == "*" || candidate == etag || candidate == "W/"+etag {
+			return true
+		}
+	}
+	return false
 }
 
 func securityHeaders(next http.Handler) http.Handler {

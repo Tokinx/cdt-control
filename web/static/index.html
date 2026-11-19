@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div id="toast-region" class="toast-region" popover="manual" aria-live="polite" aria-atomic="true"></div>
   <div id="action-popover" class="cselect-menu action-popover" popover="auto"></div>
 
   <!-- 登录视图 -->
@@ -216,9 +216,9 @@
 
       <section class="surface-panel" aria-labelledby="detail-logs-heading">
         <div class="section-head wrap-gap">
-          <div class="tab-group" role="tablist" aria-label="实例日志分类">
-            <button type="button" role="tab" id="tab-inst-realtime" class="tab-btn is-active" aria-selected="true" data-log-tab="realtime">实时追踪</button>
-            <button type="button" role="tab" id="tab-inst-audit" class="tab-btn" aria-selected="false" data-log-tab="audit">审计记录</button>
+          <div class="tab-group" id="detail-log-tabs" role="tablist" aria-label="实例日志分类">
+            <button type="button" role="tab" id="tab-inst-realtime" class="tab-btn is-active" aria-selected="true" tabindex="0" data-log-tab="realtime">实时追踪</button>
+            <button type="button" role="tab" id="tab-inst-audit" class="tab-btn" aria-selected="false" tabindex="-1" data-log-tab="audit">审计记录</button>
           </div>
           <div class="inline-controls">
             <h2 id="detail-logs-heading" class="visually-hidden">实例运行日志</h2>
@@ -556,9 +556,9 @@
     </div>
     <div class="modal-body stack-md">
       <div class="section-head wrap-gap">
-        <div class="tab-group" role="tablist" aria-label="全局日志分类">
-          <button type="button" role="tab" class="tab-btn is-active" aria-selected="true" data-glog-tab="audit">审计记录</button>
-          <button type="button" role="tab" class="tab-btn" aria-selected="false" data-glog-tab="realtime">实时追踪</button>
+        <div class="tab-group" id="global-log-tabs" role="tablist" aria-label="全局日志分类">
+          <button type="button" role="tab" class="tab-btn is-active" aria-selected="true" tabindex="0" data-glog-tab="audit">审计记录</button>
+          <button type="button" role="tab" class="tab-btn" aria-selected="false" tabindex="-1" data-glog-tab="realtime">实时追踪</button>
         </div>
         <div class="inline-controls">
           <button type="button" id="btn-clear-glogs" class="btn btn-subtle btn-sm btn-icon-only btn-danger-subtle" aria-label="清除当前日志" title="清除当前日志">

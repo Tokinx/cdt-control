@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -542,5 +543,96 @@ func TestClearLogsEndpoints(t *testing.T) {
 	ga, gr = fetchLogs("/api/logs?level=all")
 	if ga != 0 || gr != 0 {
 		t.Fatalf("expected all global logs empty, got audit=%d realtime=%d", ga, gr)
+	}
+}
+
+func TestStaticAssetCacheBustingAndHeaders(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Port:                 "8080",
+		DataDir:              dir,
+		PanelUsername:        "admin",
+		PanelPassword:        "pass1234",
+		SessionSecret:        "test-session-secret-0123456789abcdef",
+		EncryptionKeyRaw:     "test-enc-key-0123456789abcdef",
+		DefaultCheckInterval: 60,
+	}
+	cipher := crypto.NewCipher(cfg.EncryptionKeyRaw)
+	store, err := db.Open(dir, cipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	staticFS, err := web.StaticFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	aliClient := aliyun.NewClient()
+	notifier := notify.NewSender(store)
+	engine := scheduler.NewEngine(store, aliClient, notifier, cfg.DefaultCheckInterval)
+	defer engine.Wait()
+	authMgr := auth.NewManager(cfg)
+	handler := NewServer(ctx, cfg, store, aliClient, notifier, engine, authMgr, staticFS)
+
+	// 1. Index HTML must not be cached and must embed versioned asset URLs.
+	indexReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	indexRec := httptest.NewRecorder()
+	handler.ServeHTTP(indexRec, indexReq)
+	if indexRec.Code != http.StatusOK {
+		t.Fatalf("GET / expected 200, got %d", indexRec.Code)
+	}
+	if cc := indexRec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("GET / Cache-Control expected no-store, got %q", cc)
+	}
+	html := indexRec.Body.String()
+	cssMatch := regexp.MustCompile(`href="(/app\.css\?v=[0-9a-f]{12})"`).FindStringSubmatch(html)
+	if len(cssMatch) != 2 {
+		t.Fatalf("expected versioned /app.css?v=... link in index.html")
+	}
+	jsMatch := regexp.MustCompile(`src="(/app\.js\?v=[0-9a-f]{12})"`).FindStringSubmatch(html)
+	if len(jsMatch) != 2 {
+		t.Fatalf("expected versioned /app.js?v=... script in index.html")
+	}
+
+	// 2. Versioned asset requests get immutable caching and ETag + 304 support.
+	for _, assetURL := range []string{cssMatch[1], jsMatch[1]} {
+		req := httptest.NewRequest(http.MethodGet, assetURL, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s expected 200, got %d", assetURL, rec.Code)
+		}
+		if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+			t.Fatalf("GET %s expected immutable Cache-Control, got %q", assetURL, cc)
+		}
+		etag := rec.Header().Get("ETag")
+		if etag == "" {
+			t.Fatalf("GET %s expected non-empty ETag", assetURL)
+		}
+
+		condReq := httptest.NewRequest(http.MethodGet, assetURL, nil)
+		condReq.Header.Set("If-None-Match", etag)
+		condRec := httptest.NewRecorder()
+		handler.ServeHTTP(condRec, condReq)
+		if condRec.Code != http.StatusNotModified {
+			t.Fatalf("conditional GET %s expected 304, got %d", assetURL, condRec.Code)
+		}
+	}
+
+	// 3. Unversioned or stale-version asset requests must disable caching.
+	for _, staleURL := range []string{"/app.js", "/app.js?v=stale0000000", "/app.css"} {
+		req := httptest.NewRequest(http.MethodGet, staleURL, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s expected 200, got %d", staleURL, rec.Code)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Fatalf("GET %s expected Cache-Control no-store, got %q", staleURL, cc)
+		}
 	}
 }
