@@ -329,3 +329,218 @@ func TestAccountDiscoverAllRegions(t *testing.T) {
 		t.Fatalf("unexpected sorted order/regions: %+v", discResp.Instances)
 	}
 }
+
+func TestClearLogsEndpoints(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Port:                 "8080",
+		DataDir:              dir,
+		PanelUsername:        "admin",
+		PanelPassword:        "pass1234",
+		SessionSecret:        "test-session-secret-0123456789abcdef",
+		EncryptionKeyRaw:     "test-enc-key-0123456789abcdef",
+		DefaultCheckInterval: 60,
+	}
+	cipher := crypto.NewCipher(cfg.EncryptionKeyRaw)
+	store, err := db.Open(dir, cipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	staticFS, err := web.StaticFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	aliClient := aliyun.NewClient()
+	notifier := notify.NewSender(store)
+	engine := scheduler.NewEngine(store, aliClient, notifier, cfg.DefaultCheckInterval)
+	defer engine.Wait()
+	defer cancel()
+	authMgr := auth.NewManager(cfg)
+	handler := NewServer(ctx, cfg, store, aliClient, notifier, engine, authMgr, staticFS)
+
+	// Unauthenticated clear must be rejected
+	unauthReq := httptest.NewRequest(http.MethodDelete, "/api/logs?scope=all", nil)
+	unauthRec := httptest.NewRecorder()
+	handler.ServeHTTP(unauthRec, unauthReq)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated DELETE /api/logs expected 401, got %d", unauthRec.Code)
+	}
+
+	// Login
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"username":"admin","password":"pass1234"}`))
+	loginReq.RemoteAddr = "127.0.0.1:50003"
+	loginRec := httptest.NewRecorder()
+	handler.ServeHTTP(loginRec, loginReq)
+	cookies := loginRec.Result().Cookies()
+
+	// Create account + 2 instances (each emits audit + realtime logs)
+	accReq := httptest.NewRequest(http.MethodPost, "/api/accounts?defer_check=1", bytes.NewBufferString(`{"name":"主账号","access_key_id":"LTAI5tTestKey0001","access_key_secret":"Secret0001"}`))
+	accReq.AddCookie(cookies[0])
+	accRec := httptest.NewRecorder()
+	handler.ServeHTTP(accRec, accReq)
+	if accRec.Code != http.StatusCreated {
+		t.Fatalf("create account expected 201, got %d", accRec.Code)
+	}
+
+	for _, id := range []string{"i-log01", "i-log02"} {
+		body := `{"name":"` + id + `","account_id":1,"region_id":"cn-hongkong","instance_id":"` + id + `","traffic_threshold_gb":190,"automation_mode":"paused","enabled":true}`
+		req := httptest.NewRequest(http.MethodPost, "/api/instances?defer_check=1", bytes.NewBufferString(body))
+		req.AddCookie(cookies[0])
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create instance %s expected 201, got %d", id, rec.Code)
+		}
+	}
+
+	// Non-existent instance returns 404
+	notFoundReq := httptest.NewRequest(http.MethodDelete, "/api/instances/999/logs?scope=all", nil)
+	notFoundReq.AddCookie(cookies[0])
+	notFoundRec := httptest.NewRecorder()
+	handler.ServeHTTP(notFoundRec, notFoundReq)
+	if notFoundRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown instance, got %d", notFoundRec.Code)
+	}
+
+	// Invalid scope or level returns 400
+	badScopeReq := httptest.NewRequest(http.MethodDelete, "/api/logs?scope=invalid", nil)
+	badScopeReq.AddCookie(cookies[0])
+	badScopeRec := httptest.NewRecorder()
+	handler.ServeHTTP(badScopeRec, badScopeReq)
+	if badScopeRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid scope, got %d", badScopeRec.Code)
+	}
+
+	badLevelReq := httptest.NewRequest(http.MethodDelete, "/api/logs?scope=realtime&level=bogus", nil)
+	badLevelReq.AddCookie(cookies[0])
+	badLevelRec := httptest.NewRecorder()
+	handler.ServeHTTP(badLevelRec, badLevelReq)
+	if badLevelRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid level, got %d", badLevelRec.Code)
+	}
+
+	// Add an error log to instance 1 & instance 2 to verify level-filtered clearing
+	inst1Model, _ := store.GetInstance(1)
+	inst2Model, _ := store.GetInstance(2)
+	engine.RecordManualAction(inst1Model, "error", "error", "inst1 error msg")
+	engine.RecordManualAction(inst2Model, "error", "error", "inst2 error msg")
+
+	fetchLogs := func(path string) (auditCount int, realtimeCount int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(cookies[0])
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s expected 200, got %d", path, rec.Code)
+		}
+		var out struct {
+			Audit    []db.AuditLog       `json:"audit"`
+			Realtime []scheduler.RingLog `json:"realtime"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return len(out.Audit), len(out.Realtime)
+	}
+
+	// Clear only error realtime logs for instance 1 -> info realtime & all audit must remain
+	clrErrRTReq := httptest.NewRequest(http.MethodDelete, "/api/instances/1/logs?scope=realtime&level=error", nil)
+	clrErrRTReq.AddCookie(cookies[0])
+	clrErrRTRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrErrRTRec, clrErrRTReq)
+	if clrErrRTRec.Code != http.StatusOK {
+		t.Fatalf("clear inst 1 error realtime expected 200, got %d: %s", clrErrRTRec.Code, clrErrRTRec.Body.String())
+	}
+	a1, r1 := fetchLogs("/api/instances/1/logs?level=all")
+	if a1 != 2 || r1 != 1 {
+		t.Fatalf("expected inst 1 audit=2 and realtime=1 (info kept), got audit=%d realtime=%d", a1, r1)
+	}
+	a2, r2 := fetchLogs("/api/instances/2/logs?level=all")
+	if a2 != 2 || r2 != 2 {
+		t.Fatalf("expected inst 2 logs untouched (2, 2), got audit=%d realtime=%d", a2, r2)
+	}
+
+	// Clear remaining realtime logs for instance 1
+	clrRTReq := httptest.NewRequest(http.MethodDelete, "/api/instances/1/logs?scope=realtime&level=all", nil)
+	clrRTReq.AddCookie(cookies[0])
+	clrRTRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrRTRec, clrRTReq)
+	if clrRTRec.Code != http.StatusOK {
+		t.Fatalf("clear instance 1 realtime expected 200, got %d: %s", clrRTRec.Code, clrRTRec.Body.String())
+	}
+	a1, r1 = fetchLogs("/api/instances/1/logs?level=all")
+	if a1 != 2 || r1 != 0 {
+		t.Fatalf("after clearing inst 1 realtime, expected audit=2 and realtime=0, got audit=%d realtime=%d", a1, r1)
+	}
+
+	// Clear only error audit logs for instance 1 -> info audit must remain
+	clrErrAuditReq := httptest.NewRequest(http.MethodDelete, "/api/instances/1/logs?scope=audit&level=error", nil)
+	clrErrAuditReq.AddCookie(cookies[0])
+	clrErrAuditRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrErrAuditRec, clrErrAuditReq)
+	if clrErrAuditRec.Code != http.StatusOK {
+		t.Fatalf("clear inst 1 error audit expected 200, got %d", clrErrAuditRec.Code)
+	}
+	a1, r1 = fetchLogs("/api/instances/1/logs?level=all")
+	if a1 != 1 || r1 != 0 {
+		t.Fatalf("expected inst 1 audit=1 (info kept) and realtime=0, got audit=%d realtime=%d", a1, r1)
+	}
+
+	// Clear remaining audit logs for instance 1
+	clrAuditReq := httptest.NewRequest(http.MethodDelete, "/api/instances/1/logs?scope=audit", nil)
+	clrAuditReq.AddCookie(cookies[0])
+	clrAuditRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrAuditRec, clrAuditReq)
+	if clrAuditRec.Code != http.StatusOK {
+		t.Fatalf("clear instance 1 audit expected 200, got %d", clrAuditRec.Code)
+	}
+	a1, r1 = fetchLogs("/api/instances/1/logs?level=all")
+	if a1 != 0 || r1 != 0 {
+		t.Fatalf("expected inst 1 logs all empty, got audit=%d realtime=%d", a1, r1)
+	}
+
+	// Clear global error audit logs -> info audit must remain
+	clrGErrAuditReq := httptest.NewRequest(http.MethodDelete, "/api/logs?scope=audit&level=error", nil)
+	clrGErrAuditReq.AddCookie(cookies[0])
+	clrGErrAuditRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrGErrAuditRec, clrGErrAuditReq)
+	if clrGErrAuditRec.Code != http.StatusOK {
+		t.Fatalf("clear global error audit expected 200, got %d", clrGErrAuditRec.Code)
+	}
+	gaErr, _ := fetchLogs("/api/logs?level=error")
+	gaInfo, _ := fetchLogs("/api/logs?level=info")
+	if gaErr != 0 || gaInfo == 0 {
+		t.Fatalf("expected global error audit=0 and info audit>0, got err=%d info=%d", gaErr, gaInfo)
+	}
+
+	// Clear global realtime logs only
+	clrGRTReq := httptest.NewRequest(http.MethodDelete, "/api/logs?scope=realtime", nil)
+	clrGRTReq.AddCookie(cookies[0])
+	clrGRTRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrGRTRec, clrGRTReq)
+	if clrGRTRec.Code != http.StatusOK {
+		t.Fatalf("clear global realtime expected 200, got %d", clrGRTRec.Code)
+	}
+	ga, gr := fetchLogs("/api/logs?level=all")
+	if ga == 0 || gr != 0 {
+		t.Fatalf("expected global audit>0 and realtime=0, got audit=%d realtime=%d", ga, gr)
+	}
+
+	// Clear global all logs (default scope & level)
+	clrAllReq := httptest.NewRequest(http.MethodDelete, "/api/logs", nil)
+	clrAllReq.AddCookie(cookies[0])
+	clrAllRec := httptest.NewRecorder()
+	handler.ServeHTTP(clrAllRec, clrAllReq)
+	if clrAllRec.Code != http.StatusOK {
+		t.Fatalf("clear global all expected 200, got %d", clrAllRec.Code)
+	}
+	ga, gr = fetchLogs("/api/logs?level=all")
+	if ga != 0 || gr != 0 {
+		t.Fatalf("expected all global logs empty, got audit=%d realtime=%d", ga, gr)
+	}
+}

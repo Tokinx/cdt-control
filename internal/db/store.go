@@ -872,11 +872,7 @@ func (s *Store) AddAuditLog(entry AuditLog) error {
 	return err
 }
 
-// ListAuditLogs retrieves persisted audit logs filtered optionally by instanceIDRef and level.
-func (s *Store) ListAuditLogs(instanceIDRef int64, level string, limit int) ([]AuditLog, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+func buildAuditLogWhere(instanceIDRef int64, level string) (string, []any) {
 	var conds []string
 	var args []any
 	if instanceIDRef > 0 {
@@ -887,10 +883,18 @@ func (s *Store) ListAuditLogs(instanceIDRef int64, level string, limit int) ([]A
 		conds = append(conds, "level = ?")
 		args = append(args, level)
 	}
-	where := ""
-	if len(conds) > 0 {
-		where = "WHERE " + strings.Join(conds, " AND ")
+	if len(conds) == 0 {
+		return "", nil
 	}
+	return "WHERE " + strings.Join(conds, " AND "), args
+}
+
+// ListAuditLogs retrieves persisted audit logs filtered optionally by instanceIDRef and level.
+func (s *Store) ListAuditLogs(instanceIDRef int64, level string, limit int) ([]AuditLog, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	where, args := buildAuditLogWhere(instanceIDRef, level)
 	args = append(args, limit)
 
 	query := fmt.Sprintf(`
@@ -916,6 +920,20 @@ func (s *Store) ListAuditLogs(instanceIDRef int64, level string, limit int) ([]A
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// ClearAuditLogs deletes persisted audit logs filtered optionally by instanceIDRef and level.
+func (s *Store) ClearAuditLogs(instanceIDRef int64, level string) (int64, error) {
+	where, args := buildAuditLogWhere(instanceIDRef, level)
+	query := "DELETE FROM audit_logs"
+	if where != "" {
+		query += " " + where
+	}
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // GetSchedulerSettings returns persisted scheduler config or defaults.

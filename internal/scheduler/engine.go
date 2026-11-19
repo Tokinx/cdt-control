@@ -215,6 +215,33 @@ func (e *Engine) GetRecentLogs(instanceIDRef int64, limit int) []RingLog {
 	return out
 }
 
+// ClearRecentLogs removes in-memory trace logs filtered optionally by instanceIDRef and level.
+func (e *Engine) ClearRecentLogs(instanceIDRef int64, level string) int {
+	e.ringMu.Lock()
+	defer e.ringMu.Unlock()
+
+	filterByLevel := level != "" && level != "all"
+	if instanceIDRef <= 0 && !filterByLevel {
+		removed := len(e.ringLogs)
+		e.ringLogs = e.ringLogs[:0]
+		return removed
+	}
+
+	kept := e.ringLogs[:0]
+	removed := 0
+	for _, item := range e.ringLogs {
+		matchInst := instanceIDRef <= 0 || item.InstanceIDRef == instanceIDRef
+		matchLevel := !filterByLevel || item.Level == level
+		if matchInst && matchLevel {
+			removed++
+			continue
+		}
+		kept = append(kept, item)
+	}
+	e.ringLogs = kept
+	return removed
+}
+
 func (e *Engine) setNextRun(t time.Time) {
 	e.ringMu.Lock()
 	e.nextRunAt = t

@@ -115,26 +115,27 @@ const supportsPopover = Object.hasOwn(HTMLElement.prototype, "popover");
 
 function positionFloatingMenu(anchorEl, menuEl) {
   const rect = anchorEl.getBoundingClientRect();
-  const minWidth = Math.max(rect.width, 130);
+  const minWidth = Math.max(Math.round(rect.width), 132);
+  const maxWidth = Math.min(window.innerWidth - 16, Math.max(minWidth, 440));
   menuEl.style.minWidth = `${minWidth}px`;
-  menuEl.style.maxWidth = `${Math.min(window.innerWidth - 16, Math.max(minWidth, 440))}px`;
+  menuEl.style.maxWidth = `${maxWidth}px`;
 
-  const menuW = Math.max(menuEl.offsetWidth, minWidth);
-  const menuH = Math.min(menuEl.scrollHeight || 240, 240);
-  const spaceBelow = window.innerHeight - rect.bottom - 8;
-  const spaceAbove = rect.top - 8;
+  const menuW = Math.max(Math.round(menuEl.offsetWidth), minWidth);
+  const menuH = Math.min(Math.round(menuEl.scrollHeight || 240), 240);
+  const spaceBelow = Math.floor(window.innerHeight - rect.bottom - 8);
+  const spaceAbove = Math.floor(rect.top - 8);
 
   let top;
   let maxH;
   if (spaceBelow >= Math.min(menuH, 160) || spaceBelow >= spaceAbove) {
-    top = rect.bottom + 2;
+    top = Math.round(rect.bottom) + 2;
     maxH = Math.max(100, Math.min(240, spaceBelow));
   } else {
     maxH = Math.max(100, Math.min(240, spaceAbove));
-    top = Math.max(8, rect.top - Math.min(menuH, maxH) - 2);
+    top = Math.max(8, Math.round(rect.top) - Math.min(menuH, maxH) - 2);
   }
 
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuW - 8));
+  const left = Math.max(8, Math.min(Math.round(rect.left), window.innerWidth - menuW - 8));
   menuEl.style.left = `${left}px`;
   menuEl.style.top = `${top}px`;
   menuEl.style.maxHeight = `${maxH}px`;
@@ -895,6 +896,8 @@ function openActionConfirmModal({
   warningText = "",
   showStopOptions = false,
   defaultForceStop = false,
+  optionLabel = "",
+  optionDefault = false,
   confirmLabel = "确认",
   danger = false,
 } = {}) {
@@ -927,10 +930,16 @@ function openActionConfirmModal({
     }
 
     const optsEl = $("#act-confirm-options");
-    const forceCheck = $("#stop-force-check");
-    optsEl.hidden = !showStopOptions;
-    if (showStopOptions) {
-      forceCheck.checked = Boolean(defaultForceStop);
+    const optCheck = $("#act-confirm-opt-check");
+    const optLabelEl = $("#act-confirm-opt-label");
+    const resolvedOptLabel = optionLabel || (showStopOptions ? "强制关机 (ForceStop)" : "");
+    const resolvedOptDefault = optionLabel ? Boolean(optionDefault) : Boolean(defaultForceStop);
+    optsEl.hidden = !resolvedOptLabel;
+    if (resolvedOptLabel) {
+      optLabelEl.textContent = resolvedOptLabel;
+      optCheck.checked = resolvedOptDefault;
+    } else {
+      optCheck.checked = false;
     }
 
     const submitBtn = $("#act-confirm-btn");
@@ -939,10 +948,13 @@ function openActionConfirmModal({
 
     const onClose = () => {
       const confirmed = dialog.returnValue === "confirm";
+      dialog.returnValue = "";
       dialog.removeEventListener("close", onClose);
+      const checked = Boolean(resolvedOptLabel) && optCheck.checked;
       resolve({
         confirmed,
-        force_stop: showStopOptions && forceCheck.checked,
+        option_checked: checked,
+        force_stop: showStopOptions && checked,
       });
     };
     dialog.returnValue = "";
@@ -1135,7 +1147,7 @@ function renderInstancesTable(instances) {
             ${statusDotHTML(inst.last_status)}
             ${ICONS.chevronDown}
           </button>
-          ${inst.last_error ? `<div class="muted-text" style="color:var(--danger);font-size:0.78rem;margin-top:2px;">异常（点详情查看）</div>` : ""}
+          ${inst.last_error ? `<div class="inst-error-hint">异常（点详情查看）</div>` : ""}
         </td>
         <td data-label="流量 / 阈值">
           <div class="traffic-cell">
@@ -1445,16 +1457,39 @@ async function refreshDetailView(id) {
   }
 }
 
+function logLevelText(level) {
+  switch (level) {
+    case "action":
+      return "动作";
+    case "warn":
+      return "预警";
+    case "error":
+      return "错误";
+    case "info":
+      return "信息";
+    default:
+      return "全部级别";
+  }
+}
+
+function syncLogClearButton(btn, items) {
+  if (!btn) return;
+  btn.disabled = items.length === 0;
+}
+
 async function refreshInstanceLogs(id) {
   const listEl = $("#detail-logs-list");
+  const clearBtn = $("#btn-clear-inst-logs");
   try {
     const res = await apiFetch(`/api/instances/${id}/logs?level=${encodeURIComponent(state.detailLogLevel)}`);
     const items = state.detailLogTab === "realtime"
       ? filterLogsByLevel(res.realtime || [], state.detailLogLevel)
       : (res.audit || []);
+    syncLogClearButton(clearBtn, items);
     renderLogItems(listEl, items);
   } catch (err) {
-    listEl.innerHTML = `<div class="muted-text" style="padding:1rem;">加载日志失败：${esc(err.message)}</div>`;
+    syncLogClearButton(clearBtn, []);
+    listEl.innerHTML = `<div class="muted-text log-empty">加载日志失败：${esc(err.message)}</div>`;
   }
 }
 
@@ -1465,7 +1500,7 @@ function filterLogsByLevel(items, level) {
 
 function renderLogItems(container, items) {
   if (!items.length) {
-    container.innerHTML = `<div class="muted-text" style="padding:1rem;">暂无日志</div>`;
+    container.innerHTML = `<div class="muted-text log-empty">暂无日志</div>`;
     return;
   }
   const levelLabel = (lv) => {
@@ -1478,9 +1513,80 @@ function renderLogItems(container, items) {
     <div class="log-row">
       <span class="mono muted-text tabular">${esc(fmtTime(item.created_at))}</span>
       <span>${levelLabel(item.level)}</span>
-      <span>${item.aliyun_instance_id ? `<span class="mono muted-text">[${esc(item.aliyun_instance_id)}]</span> ` : ""}${esc(item.message)}</span>
+      <span class="log-msg">${item.aliyun_instance_id ? `<span class="mono muted-text">[${esc(item.aliyun_instance_id)}]</span> ` : ""}${esc(item.message)}</span>
     </div>
   `).join("");
+}
+
+async function clearLogsWithConfirm({ tab, level, title, desc, summaryRows, endpoint }) {
+  const isRealtime = tab === "realtime";
+  const tabLabel = isRealtime ? "实时追踪" : "审计记录";
+  const levelLabel = logLevelText(level);
+  const res = await openActionConfirmModal({
+    title,
+    desc,
+    summaryRows: [
+      ...summaryRows,
+      ["日志分类", tabLabel],
+      ["日志级别", levelLabel],
+    ],
+    confirmLabel: "确认清除",
+    danger: true,
+  });
+  if (!res.confirmed) return false;
+
+  const scope = isRealtime ? "realtime" : "audit";
+  const normalizedLevel = level || "all";
+  await apiFetch(
+    `${endpoint}?scope=${encodeURIComponent(scope)}&level=${encodeURIComponent(normalizedLevel)}`,
+    { method: "DELETE" },
+  );
+  showToast(
+    normalizedLevel === "all" ? `已清除${tabLabel}` : `已清除${tabLabel}（${levelLabel}）`,
+    "success",
+  );
+  return true;
+}
+
+async function clearInstanceLogs(id) {
+  const inst = (state.dashboard?.instances || []).find((x) => x.id === id);
+  const targetLabel = inst ? (inst.name ? `${inst.name} (${inst.instance_id})` : inst.instance_id) : `#${id}`;
+  try {
+    const cleared = await clearLogsWithConfirm({
+      tab: state.detailLogTab,
+      level: state.detailLogLevel,
+      title: "确认清除当前日志",
+      desc: "仅清除当前实例在当前分类与筛选级别下显示的日志，清除后不可恢复。",
+      summaryRows: [["目标实例", targetLabel, true]],
+      endpoint: `/api/instances/${id}/logs`,
+    });
+    if (cleared) {
+      await refreshInstanceLogs(id);
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function clearGlobalLogs() {
+  try {
+    const cleared = await clearLogsWithConfirm({
+      tab: state.globalLogTab,
+      level: state.globalLogLevel,
+      title: "确认清除当前日志",
+      desc: "仅清除全局日志在当前分类与筛选级别下显示的日志，清除后不可恢复。",
+      summaryRows: [["作用范围", "全局（所有账号与实例）"]],
+      endpoint: "/api/logs",
+    });
+    if (cleared) {
+      await refreshGlobalLogs();
+      if (state.activeInstanceId) {
+        await refreshInstanceLogs(state.activeInstanceId);
+      }
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
 
 /* ==================== 弹窗：账号管理 ==================== */
@@ -1827,14 +1933,17 @@ async function openGlobalLogsDialog() {
 
 async function refreshGlobalLogs() {
   const box = $("#global-logs-list");
+  const clearBtn = $("#btn-clear-glogs");
   try {
     const res = await apiFetch(`/api/logs?level=${encodeURIComponent(state.globalLogLevel)}`);
     const items = state.globalLogTab === "realtime"
       ? filterLogsByLevel(res.realtime || [], state.globalLogLevel)
       : (res.audit || []);
+    syncLogClearButton(clearBtn, items);
     renderLogItems(box, items);
   } catch (err) {
-    box.innerHTML = `<div class="muted-text" style="padding:1rem;">加载失败：${esc(err.message)}</div>`;
+    syncLogClearButton(clearBtn, []);
+    box.innerHTML = `<div class="muted-text log-empty">加载失败：${esc(err.message)}</div>`;
   }
 }
 
@@ -2103,6 +2212,9 @@ function bindEvents() {
   $("#btn-refresh-inst-logs").addEventListener("click", () => {
     if (state.activeInstanceId) refreshInstanceLogs(state.activeInstanceId);
   });
+  $("#btn-clear-inst-logs").addEventListener("click", () => {
+    if (state.activeInstanceId) clearInstanceLogs(state.activeInstanceId);
+  });
 
   for (const tab of $$("[data-glog-tab]")) {
     tab.addEventListener("click", () => {
@@ -2116,6 +2228,7 @@ function bindEvents() {
     });
   }
   $("#btn-refresh-glogs").addEventListener("click", refreshGlobalLogs);
+  $("#btn-clear-glogs").addEventListener("click", clearGlobalLogs);
 
   window.addEventListener("hashchange", handleHashRoute);
 }

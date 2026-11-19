@@ -222,6 +222,11 @@
           </div>
           <div class="inline-controls">
             <h2 id="detail-logs-heading" class="visually-hidden">实例运行日志</h2>
+            <button type="button" id="btn-clear-inst-logs" class="btn btn-subtle btn-sm btn-icon-only btn-danger-subtle" aria-label="清除当前日志" title="清除当前日志">
+              <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M3 6h18"/><path d="M8 6V3h8v3"/><path d="M19 6v15H5V6"/>
+              </svg>
+            </button>
             <span id="detail-log-level-lbl" class="visually-hidden">日志级别筛选</span>
             <div class="cselect cselect-sm" id="detail-log-level">
               <button type="button" class="cselect-trigger" id="detail-log-level-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="detail-log-level-lbl detail-log-level-val">
@@ -550,12 +555,17 @@
       </button>
     </div>
     <div class="modal-body stack-md">
-      <div class="section-head">
+      <div class="section-head wrap-gap">
         <div class="tab-group" role="tablist" aria-label="全局日志分类">
           <button type="button" role="tab" class="tab-btn is-active" aria-selected="true" data-glog-tab="audit">审计记录</button>
           <button type="button" role="tab" class="tab-btn" aria-selected="false" data-glog-tab="realtime">实时追踪</button>
         </div>
         <div class="inline-controls">
+          <button type="button" id="btn-clear-glogs" class="btn btn-subtle btn-sm btn-icon-only btn-danger-subtle" aria-label="清除当前日志" title="清除当前日志">
+            <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M3 6h18"/><path d="M8 6V3h8v3"/><path d="M19 6v15H5V6"/>
+            </svg>
+          </button>
           <span id="glog-level-lbl" class="visually-hidden">全局日志级别</span>
           <div class="cselect cselect-sm" id="glog-level">
             <button type="button" class="cselect-trigger" id="glog-level-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="glog-level-lbl glog-level-val">
@@ -589,8 +599,8 @@
       <div id="act-confirm-warn" class="alert alert-warn" hidden></div>
       <div id="act-confirm-options" class="stack-sm" hidden>
         <div class="checkbox-row">
-          <input type="checkbox" id="stop-force-check">
-          <label for="stop-force-check">强制关机 (ForceStop)</label>
+          <input type="checkbox" id="act-confirm-opt-check">
+          <label for="act-confirm-opt-check" id="act-confirm-opt-label">强制关机 (ForceStop)</label>
         </div>
       </div>
       <div class="modal-foot">

@@ -146,4 +146,40 @@ func TestStoreAccountsInstancesAndCDT(t *testing.T) {
 	if err != nil || fullCfg.BarkEndpoint != "https://api.day.app/SecretToken123456" || fullCfg.BarkGroup != "CDT-Updated" {
 		t.Fatalf("expected preserved bark endpoint, got %+v, err=%v", fullCfg, err)
 	}
+
+	// Audit log clearing (scoped by instance, level, and global)
+	for _, entry := range []AuditLog{
+		{InstanceIDRef: inst1.ID, AliyunInstanceID: inst1.InstanceID, RegionID: inst1.RegionID, Level: "info", Event: "test", Message: "inst1 info"},
+		{InstanceIDRef: inst1.ID, AliyunInstanceID: inst1.InstanceID, RegionID: inst1.RegionID, Level: "error", Event: "test", Message: "inst1 error"},
+		{InstanceIDRef: inst2.ID, AliyunInstanceID: inst2.InstanceID, RegionID: inst2.RegionID, Level: "error", Event: "test", Message: "inst2 error"},
+		{InstanceIDRef: 0, Level: "info", Event: "config", Message: "global info"},
+	} {
+		if err := store.AddAuditLog(entry); err != nil {
+			t.Fatalf("AddAuditLog: %v", err)
+		}
+	}
+	deletedInst1Err, err := store.ClearAuditLogs(inst1.ID, "error")
+	if err != nil || deletedInst1Err != 1 {
+		t.Fatalf("ClearAuditLogs(inst1, error) = (%d, %v), want (1, nil)", deletedInst1Err, err)
+	}
+	inst1Logs, err := store.ListAuditLogs(inst1.ID, "all", 50)
+	if err != nil || len(inst1Logs) != 1 || inst1Logs[0].Level != "info" {
+		t.Fatalf("expected only inst1 info log remaining, got %+v, err=%v", inst1Logs, err)
+	}
+	deletedInst1All, err := store.ClearAuditLogs(inst1.ID, "all")
+	if err != nil || deletedInst1All != 1 {
+		t.Fatalf("ClearAuditLogs(inst1, all) = (%d, %v), want (1, nil)", deletedInst1All, err)
+	}
+	remainingAll, err := store.ListAuditLogs(0, "all", 50)
+	if err != nil || len(remainingAll) != 2 {
+		t.Fatalf("expected 2 remaining audit logs, got %d, err=%v", len(remainingAll), err)
+	}
+	deletedAll, err := store.ClearAuditLogs(0, "all")
+	if err != nil || deletedAll != 2 {
+		t.Fatalf("ClearAuditLogs(0, all) = (%d, %v), want (2, nil)", deletedAll, err)
+	}
+	afterGlobalClear, err := store.ListAuditLogs(0, "all", 50)
+	if err != nil || len(afterGlobalClear) != 0 {
+		t.Fatalf("expected 0 audit logs after global clear, got %d, err=%v", len(afterGlobalClear), err)
+	}
 }

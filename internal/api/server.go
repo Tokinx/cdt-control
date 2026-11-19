@@ -90,9 +90,11 @@ func NewServer(
 	mux.HandleFunc("POST /api/instances/{id}/stop", s.authMgr.RequireAuth(s.handleStopInstance))
 	mux.HandleFunc("POST /api/instances/{id}/mode", s.authMgr.RequireAuth(s.handleSetInstanceMode))
 	mux.HandleFunc("GET /api/instances/{id}/logs", s.authMgr.RequireAuth(s.handleInstanceLogs))
+	mux.HandleFunc("DELETE /api/instances/{id}/logs", s.authMgr.RequireAuth(s.handleClearInstanceLogs))
 
 	// Global logs & Settings
 	mux.HandleFunc("GET /api/logs", s.authMgr.RequireAuth(s.handleGlobalLogs))
+	mux.HandleFunc("DELETE /api/logs", s.authMgr.RequireAuth(s.handleClearGlobalLogs))
 	mux.HandleFunc("GET /api/settings", s.authMgr.RequireAuth(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings/scheduler", s.authMgr.RequireAuth(s.handleUpdateScheduler))
 	mux.HandleFunc("PUT /api/settings/notifications", s.authMgr.RequireAuth(s.handleUpdateNotifications))
@@ -825,6 +827,71 @@ func (s *Server) handleGlobalLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"audit":    auditLogs,
 		"realtime": realtimeLogs,
+	})
+}
+
+func (s *Server) handleClearInstanceLogs(w http.ResponseWriter, r *http.Request) {
+	id, err := parseIDParam(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if _, err := s.store.GetInstance(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "实例不存在"})
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.handleClearLogsScoped(w, r, id)
+}
+
+func (s *Server) handleClearGlobalLogs(w http.ResponseWriter, r *http.Request) {
+	s.handleClearLogsScoped(w, r, 0)
+}
+
+func (s *Server) handleClearLogsScoped(w http.ResponseWriter, r *http.Request, instanceIDRef int64) {
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "all"
+	}
+	if scope != "all" && scope != "realtime" && scope != "audit" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("不支持的日志清除范围: %s", scope)})
+		return
+	}
+
+	level := strings.TrimSpace(r.URL.Query().Get("level"))
+	if level == "" {
+		level = "all"
+	}
+	switch level {
+	case "all", "action", "warn", "error", "info":
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("不支持的日志级别: %s", level)})
+		return
+	}
+
+	var clearedRealtime int
+	var clearedAudit int64
+	if scope == "realtime" || scope == "all" {
+		clearedRealtime = s.engine.ClearRecentLogs(instanceIDRef, level)
+	}
+	if scope == "audit" || scope == "all" {
+		var err error
+		clearedAudit, err = s.store.ClearAuditLogs(instanceIDRef, level)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":               true,
+		"scope":            scope,
+		"level":            level,
+		"cleared_realtime": clearedRealtime,
+		"cleared_audit":    clearedAudit,
 	})
 }
 

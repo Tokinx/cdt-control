@@ -62,3 +62,42 @@ func TestNextAlignedTick(t *testing.T) {
 		t.Fatalf("expected %s, got %s", want, next)
 	}
 }
+
+func TestClearRecentLogs(t *testing.T) {
+	e := NewEngine(nil, nil, nil, 60)
+	e.pushRingLog(1, "i-one", "cn-hongkong", "info", "check", "msg 1a")
+	e.pushRingLog(2, "i-two", "ap-southeast-1", "warn", "check", "msg 2a")
+	e.pushRingLog(1, "i-one", "cn-hongkong", "warn", "check", "msg 1b")
+	e.pushRingLog(0, "", "", "info", "config", "global msg")
+
+	if removed := e.ClearRecentLogs(1, "warn"); removed != 1 {
+		t.Fatalf("ClearRecentLogs(1, warn) removed %d, want 1", removed)
+	}
+	if got := e.GetRecentLogs(1, 50); len(got) != 1 || got[0].Level != "info" {
+		t.Fatalf("expected instance 1 info log preserved, got %+v", got)
+	}
+	if got := e.GetRecentLogs(2, 50); len(got) != 1 || got[0].Level != "warn" {
+		t.Fatalf("expected instance 2 warn log preserved, got %+v", got)
+	}
+
+	if removed := e.ClearRecentLogs(1, "all"); removed != 1 {
+		t.Fatalf("ClearRecentLogs(1, all) removed %d, want 1", removed)
+	}
+	if got := e.GetRecentLogs(1, 50); len(got) != 0 {
+		t.Fatalf("expected 0 logs for instance 1, got %d", len(got))
+	}
+
+	if removed := e.ClearRecentLogs(0, "warn"); removed != 1 {
+		t.Fatalf("ClearRecentLogs(0, warn) removed %d, want 1", removed)
+	}
+	if got := e.GetRecentLogs(0, 50); len(got) != 1 || got[0].Message != "global msg" {
+		t.Fatalf("expected only global info log preserved, got %+v", got)
+	}
+
+	if removed := e.ClearRecentLogs(0, "all"); removed != 1 {
+		t.Fatalf("ClearRecentLogs(0, all) removed %d, want 1", removed)
+	}
+	if got := e.GetRecentLogs(0, 50); len(got) != 0 {
+		t.Fatalf("expected 0 logs after global clear, got %d", len(got))
+	}
+}
